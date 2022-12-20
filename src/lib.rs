@@ -5,16 +5,18 @@ mod gatt_client;
 mod gatt_server;
 mod security;
 
-use std::{collections::HashMap, ffi::CString, sync::Arc};
+use std::{
+    collections::HashMap,
+    ffi::{c_void, CString},
+    sync::{Arc, Mutex},
+};
 
 use ::log::*;
 use advertise::RawAdvertiseData;
 
 use esp_idf_svc::nvs::EspDefaultNvs;
 
-use esp_idf_sys::{c_types::c_void, *};
-
-use esp_idf_hal::mutex::Mutex;
+use esp_idf_sys::*;
 
 pub use advertise::*;
 pub use gap::*;
@@ -67,10 +69,11 @@ static GATT_CALLBACKS_KEPT: Singleton<
 > = Mutex::new(Option::None);
 
 fn insert_gatt_cb_kept(cb_key: GattCallbacks, cb: impl Fn(u8, GattServiceEvent) + Send + 'static) {
-    GATT_CALLBACKS_KEPT
-        .lock()
-        .as_mut()
-        .and_then(|m| m.insert(cb_key, Box::new(cb)));
+    GATT_CALLBACKS_KEPT.lock().as_mut().ok().and_then(|map| {
+        return map.as_mut().and_then(|m| {
+            return m.insert(cb_key, Box::new(cb));
+        });
+    });
 }
 
 fn insert_gatt_cb_onetime(
@@ -80,14 +83,20 @@ fn insert_gatt_cb_onetime(
     GATT_CALLBACKS_ONE_TIME
         .lock()
         .as_mut()
-        .and_then(|m| m.insert(cb_key, Box::new(cb)));
+        .ok()
+        .and_then(|map| {
+            return map.as_mut().and_then(|m| {
+                return m.insert(cb_key, Box::new(cb));
+            });
+        });
 }
 
 fn insert_gap_cb(cb_key: GapCallbacks, cb: impl Fn(GapEvent) + Send + 'static) {
-    GAP_CALLBACKS
-        .lock()
-        .as_mut()
-        .and_then(|m| m.insert(cb_key, Box::new(cb)));
+    GAP_CALLBACKS.lock().as_mut().ok().and_then(|map| {
+        return map.as_mut().and_then(|m| {
+            return m.insert(cb_key, Box::new(cb));
+        });
+    });
 }
 
 unsafe extern "C" fn gap_event_handler(
@@ -97,36 +106,42 @@ unsafe extern "C" fn gap_event_handler(
     let event = GapEvent::build(event, param);
     debug!("Called gap event handler with event {{ {:#?} }}", &event);
 
-    if let Some(cb) = GAP_CALLBACKS.lock().as_mut().and_then(|m| {
-        (match &event {
-            GapEvent::RawAdvertisingDatasetComplete(_) => {
-                Some(&GapCallbacks::RawAdvertisingDataset)
-            }
-            GapEvent::RawScanResponseDatasetComplete(_) => {
-                Some(&GapCallbacks::RawScanResponseDataset)
-            }
-            GapEvent::AdvertisingDatasetComplete(_) => Some(&GapCallbacks::AdvertisingDataset),
-            GapEvent::ScanResponseDatasetComplete(_) => Some(&GapCallbacks::ScanResponseDataset),
-            GapEvent::AdvertisingStartComplete(_) => Some(&GapCallbacks::AdvertisingStart),
-            GapEvent::UpdateConnectionParamsComplete(_) => {
-                Some(&GapCallbacks::UpdateConnectionParams)
-            }
-            GapEvent::PasskeyNotification(_) => Some(&GapCallbacks::PasskeyNotify),
-            GapEvent::Key(_) => Some(&GapCallbacks::KeyEvent),
-            GapEvent::AuthenticationComplete(_) => Some(&GapCallbacks::AuthComplete),
-            GapEvent::NumericComparisonRequest(_) => Some(&GapCallbacks::NumericComparisonRequest),
-            GapEvent::SecurityRequest(_) => Some(&GapCallbacks::SecurityRequest),
-            _ => {
-                warn!("Unimplemented {:?}", event);
-                None
-            }
+    if let Some(cb) = GAP_CALLBACKS.lock().as_mut().ok().and_then(|callbacks| {
+        callbacks.as_mut().and_then(|c_map| {
+            (match &event {
+                GapEvent::RawAdvertisingDatasetComplete(_) => {
+                    Some(&GapCallbacks::RawAdvertisingDataset)
+                }
+                GapEvent::RawScanResponseDatasetComplete(_) => {
+                    Some(&GapCallbacks::RawScanResponseDataset)
+                }
+                GapEvent::AdvertisingDatasetComplete(_) => Some(&GapCallbacks::AdvertisingDataset),
+                GapEvent::ScanResponseDatasetComplete(_) => {
+                    Some(&GapCallbacks::ScanResponseDataset)
+                }
+                GapEvent::AdvertisingStartComplete(_) => Some(&GapCallbacks::AdvertisingStart),
+                GapEvent::UpdateConnectionParamsComplete(_) => {
+                    Some(&GapCallbacks::UpdateConnectionParams)
+                }
+                GapEvent::PasskeyNotification(_) => Some(&GapCallbacks::PasskeyNotify),
+                GapEvent::Key(_) => Some(&GapCallbacks::KeyEvent),
+                GapEvent::AuthenticationComplete(_) => Some(&GapCallbacks::AuthComplete),
+                GapEvent::NumericComparisonRequest(_) => {
+                    Some(&GapCallbacks::NumericComparisonRequest)
+                }
+                GapEvent::SecurityRequest(_) => Some(&GapCallbacks::SecurityRequest),
+                _ => {
+                    warn!("Unimplemented {:?}", event);
+                    None
+                }
+            })
+            .and_then(|gap_callback| c_map.get(gap_callback))
         })
-        .and_then(|cb_key| m.get(cb_key))
     }) {
         cb(event);
     } else {
         warn!("No callbak registered for event: {:?}", event);
-    }
+    };
 }
 
 unsafe extern "C" fn gatts_event_handler(
@@ -145,7 +160,11 @@ unsafe extern "C" fn gatts_event_handler(
             if let Some(cb) = GATT_CALLBACKS_ONE_TIME
                 .lock()
                 .as_mut()
-                .and_then(|m| m.remove(&GattCallbacks::Register(reg.app_id)))
+                .ok()
+                .and_then(|map| {
+                    map.as_mut()
+                        .and_then(|map| map.remove(&GattCallbacks::Register(reg.app_id)))
+                })
             {
                 cb(gatts_if, event);
             } else {
@@ -159,7 +178,11 @@ unsafe extern "C" fn gatts_event_handler(
             if let Some(cb) = GATT_CALLBACKS_ONE_TIME
                 .lock()
                 .as_mut()
-                .and_then(|m| m.remove(&GattCallbacks::Create(gatts_if)))
+                .ok()
+                .and_then(|map| {
+                    map.as_mut()
+                        .and_then(|map| map.remove(&GattCallbacks::Create(gatts_if)))
+                })
             {
                 cb(gatts_if, event);
             } else {
@@ -173,7 +196,11 @@ unsafe extern "C" fn gatts_event_handler(
             if let Some(cb) = GATT_CALLBACKS_ONE_TIME
                 .lock()
                 .as_mut()
-                .and_then(|m| m.remove(&GattCallbacks::Start(start.service_handle)))
+                .ok()
+                .and_then(|map| {
+                    map.as_mut()
+                        .and_then(|map| map.remove(&GattCallbacks::Start(start.service_handle)))
+                })
             {
                 cb(gatts_if, event);
             } else {
@@ -187,7 +214,12 @@ unsafe extern "C" fn gatts_event_handler(
             if let Some(cb) = GATT_CALLBACKS_ONE_TIME
                 .lock()
                 .as_mut()
-                .and_then(|m| m.remove(&GattCallbacks::AddCharacteristic(add_char.service_handle)))
+                .ok()
+                .and_then(|map| {
+                    map.as_mut().and_then(|map| {
+                        map.remove(&GattCallbacks::AddCharacteristic(add_char.service_handle))
+                    })
+                })
             {
                 cb(gatts_if, event);
             } else {
@@ -198,11 +230,18 @@ unsafe extern "C" fn gatts_event_handler(
             }
         }
         GattServiceEvent::AddDescriptorComplete(add_desc) => {
-            if let Some(cb) = GATT_CALLBACKS_ONE_TIME.lock().as_mut().and_then(|m| {
-                m.remove(&GattCallbacks::AddCharacteristicDesc(
-                    add_desc.service_handle,
-                ))
-            }) {
+            if let Some(cb) = GATT_CALLBACKS_ONE_TIME
+                .lock()
+                .as_mut()
+                .ok()
+                .and_then(|map| {
+                    map.as_mut().and_then(|map| {
+                        map.remove(&GattCallbacks::AddCharacteristicDesc(
+                            add_desc.service_handle,
+                        ))
+                    })
+                })
+            {
                 cb(gatts_if, event);
             } else {
                 warn!(
@@ -223,20 +262,19 @@ unsafe extern "C" fn gatts_event_handler(
             info!("Connection from: {:?}", conn);
 
             let _ = esp!(esp_ble_gap_update_conn_params(&mut conn_params));
-            if let Some(cb) = GATT_CALLBACKS_KEPT
-                .lock()
-                .as_mut()
-                .and_then(|m| m.get(&GattCallbacks::Connect(gatts_if)))
-            {
+
+            if let Some(cb) = GATT_CALLBACKS_KEPT.lock().as_mut().ok().and_then(|map| {
+                map.as_mut()
+                    .and_then(|map| map.get(&GattCallbacks::Connect(gatts_if)))
+            }) {
                 cb(gatts_if, event);
             }
         }
         GattServiceEvent::Read(read) => {
-            if let Some(cb) = GATT_CALLBACKS_KEPT
-                .lock()
-                .as_mut()
-                .and_then(|m| m.get(&GattCallbacks::Read(read.handle)))
-            {
+            if let Some(cb) = GATT_CALLBACKS_KEPT.lock().as_mut().ok().and_then(|map| {
+                map.as_mut()
+                    .and_then(|map| map.get(&GattCallbacks::Read(read.handle)))
+            }) {
                 cb(gatts_if, event);
             } else {
                 warn!(
@@ -246,11 +284,10 @@ unsafe extern "C" fn gatts_event_handler(
             }
         }
         GattServiceEvent::Write(write) => {
-            if let Some(cb) = GATT_CALLBACKS_KEPT
-                .lock()
-                .as_mut()
-                .and_then(|m| m.get(&GattCallbacks::Write(write.handle)))
-            {
+            if let Some(cb) = GATT_CALLBACKS_KEPT.lock().as_mut().ok().and_then(|map| {
+                map.as_mut()
+                    .and_then(|map| map.get(&GattCallbacks::Write(write.handle)))
+            }) {
                 cb(gatts_if, event);
             } else {
                 warn!(
@@ -271,7 +308,9 @@ pub struct EspBle {
 
 impl EspBle {
     pub fn new(device_name: String, nvs: Arc<EspDefaultNvs>) -> Result<EspBle, EspError> {
-        let mut taken = DEFAULT_TAKEN.lock();
+        let mut taken = DEFAULT_TAKEN
+            .lock()
+            .expect("Unwraping DEFAULT_TAKEN lock failed");
 
         if *taken {
             esp!(ESP_ERR_INVALID_STATE as i32)?;
@@ -279,9 +318,19 @@ impl EspBle {
 
         let ble = Self::init(device_name, nvs)?;
 
-        *GAP_CALLBACKS.lock() = Some(HashMap::new());
-        *GATT_CALLBACKS_ONE_TIME.lock() = Some(HashMap::new());
-        *GATT_CALLBACKS_KEPT.lock() = Some(HashMap::new());
+        let mut gap_callbacks = GAP_CALLBACKS
+            .lock()
+            .expect("Unwraping GAP_CALLBACKS lock failed");
+        let mut gatt_callbacks_one_time = GATT_CALLBACKS_ONE_TIME
+            .lock()
+            .expect("Unwraping GATT_CALLBACKS_ONE_TIME lock failed");
+        let mut gatt_callbacks_kept = GATT_CALLBACKS_KEPT
+            .lock()
+            .expect("Unwraping GATT_CALLBACKS_KEPT lock failed");
+
+        *gap_callbacks = Some(HashMap::new());
+        *gatt_callbacks_one_time = Some(HashMap::new());
+        *gatt_callbacks_kept = Some(HashMap::new());
 
         *taken = true;
         Ok(ble)
