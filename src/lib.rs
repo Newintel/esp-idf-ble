@@ -14,7 +14,7 @@ use std::{
 use ::log::*;
 use advertise::RawAdvertiseData;
 
-use esp_idf_svc::nvs::EspDefaultNvs;
+use esp_idf_svc::nvs::{EspNvsPartition, NvsDefault};
 
 use esp_idf_sys::*;
 
@@ -303,11 +303,14 @@ unsafe extern "C" fn gatts_event_handler(
 #[allow(dead_code)]
 pub struct EspBle {
     device_name: String,
-    nvs: Arc<EspDefaultNvs>,
+    nvs: Arc<EspNvsPartition<NvsDefault>>,
 }
 
 impl EspBle {
-    pub fn new(device_name: String, nvs: Arc<EspDefaultNvs>) -> Result<EspBle, EspError> {
+    pub fn new(
+        device_name: String,
+        nvs: Arc<EspNvsPartition<NvsDefault>>,
+    ) -> Result<EspBle, EspError> {
         let mut taken = DEFAULT_TAKEN
             .lock()
             .expect("Unwraping DEFAULT_TAKEN lock failed");
@@ -336,7 +339,10 @@ impl EspBle {
         Ok(ble)
     }
 
-    fn init(device_name: String, nvs: Arc<EspDefaultNvs>) -> Result<EspBle, EspError> {
+    fn init(
+        device_name: String,
+        nvs: Arc<EspNvsPartition<NvsDefault>>,
+    ) -> Result<EspBle, EspError> {
         #[cfg(esp32)]
         let mut bt_cfg = esp_bt_controller_config_t {
             controller_task_stack_size: ESP_TASK_BT_CONTROLLER_STACK as _,

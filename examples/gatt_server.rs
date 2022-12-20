@@ -8,10 +8,10 @@ use esp_idf_ble::{
     GattDescriptor, GattService, GattServiceEvent, ServiceUuid,
 };
 use esp_idf_hal::delay;
+use esp_idf_svc::eventloop::EspSystemEventLoop;
 // use esp_idf_hal::prelude::*;
-use esp_idf_svc::netif::EspNetifStack;
-use esp_idf_svc::nvs::EspDefaultNvs;
-use esp_idf_svc::sysloop::EspSysLoopStack;
+use esp_idf_svc::netif::{EspNetif, NetifStack};
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_sys::*;
 
 use embedded_hal::blocking::delay::DelayUs;
@@ -25,12 +25,12 @@ fn main() {
     esp_idf_svc::log::EspLogger::initialize_default();
 
     #[allow(unused)]
-    let netif_stack = Arc::new(EspNetifStack::new().expect("Unable to init Netif Stack"));
+    let netif_stack = Arc::new(EspNetif::new(NetifStack::Sta).expect("Unable to init Netif Stack"));
     #[allow(unused)]
-    let sys_loop_stack = Arc::new(EspSysLoopStack::new().expect("Unable to init sys_loop"));
+    let sys_loop_stack = Arc::new(EspSystemEventLoop::take().expect("Unable to init sys_loop"));
 
     #[allow(unused)]
-    let default_nvs = Arc::new(EspDefaultNvs::new().unwrap());
+    let default_nvs = Arc::new(EspDefaultNvsPartition::take().unwrap());
 
     let mut delay = delay::Ets {};
 
