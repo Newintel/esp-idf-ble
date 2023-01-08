@@ -54,6 +54,7 @@ enum GattCallbacks {
     Read(u16),                  // attr_handle
     Write(u16),                 // attr_handle
     Connect(u8),                // gatts_if
+    Disconnect(u8),             // gatts_if
 }
 
 #[allow(clippy::type_complexity)]
@@ -294,6 +295,19 @@ unsafe extern "C" fn gatts_event_handler(
                     "No callback registered for Write with handle: {}",
                     write.handle
                 );
+            }
+        }
+        GattServiceEvent::Disconnect(disconn) => {
+            info!(
+                "Disconnect from: {:?} with reason {:?}",
+                disconn.remote_bda, disconn.reason
+            );
+
+            if let Some(cb) = GATT_CALLBACKS_KEPT.lock().as_mut().ok().and_then(|map| {
+                map.as_mut()
+                    .and_then(|map| map.get(&GattCallbacks::Disconnect(gatts_if)))
+            }) {
+                cb(gatts_if, event);
             }
         }
         _ => warn!("Handler for {:?} not implemented", event),
@@ -692,6 +706,14 @@ impl EspBle {
         cb: impl Fn(u8, GattServiceEvent) + 'static + Send,
     ) {
         insert_gatt_cb_kept(GattCallbacks::Connect(gatts_if), cb);
+    }
+
+    pub fn register_disconnect_handler(
+        &self,
+        gatts_if: u8,
+        cb: impl Fn(u8, GattServiceEvent) + 'static + Send,
+    ) {
+        insert_gatt_cb_kept(GattCallbacks::Disconnect(gatts_if), cb);
     }
 
     pub fn register_read_handler(
